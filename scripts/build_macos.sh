@@ -6,6 +6,14 @@ APP="$OUT/Codex Auto Retry.app"
 BUILD="$ROOT/.build/macos"
 VENV="$BUILD/venv"
 mkdir -p "$OUT/$(basename "$APP")/Contents/MacOS" "$OUT/$(basename "$APP")/Contents/Resources" "$BUILD/pyinstaller-dist" "$BUILD/pyinstaller-work" "$BUILD/pyinstaller-spec"
+python3 - "$OUT" <<'PY'
+from pathlib import Path
+import sys
+
+output = Path(sys.argv[1])
+for name in ("codex-auto-retry.py", "config.default.json", "install_macos.sh", ".DS_Store"):
+    (output / name).unlink(missing_ok=True)
+PY
 if [[ ! -x "$VENV/bin/python" ]]; then
   python3 -m venv "$VENV"
 fi
@@ -38,13 +46,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 chmod 700 "$APP/Contents/MacOS/CodexAutoRetryMenuBar"
-cp "$ROOT/src/codex_auto_retry.py" "$OUT/codex-auto-retry.py"
 cp "$ROOT/src/codex_auto_retry.py" "$APP/Contents/Resources/codex-auto-retry.py"
 cp "$BUILD/pyinstaller-dist/CodexAutoRetryWatcher" "$APP/Contents/Resources/CodexAutoRetryWatcher"
 chmod 700 "$APP/Contents/Resources/CodexAutoRetryWatcher"
-cp "$ROOT/config.default.json" "$OUT/config.default.json"
-cp "$ROOT/scripts/install_macos.sh" "$OUT/install_macos.sh"
-chmod 755 "$OUT/install_macos.sh"
 plutil -lint "$APP/Contents/Info.plist"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$OUT/CodexAutoRetry-macos-arm64.app.zip"
 echo "Built $OUT"
