@@ -3,7 +3,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/dist/macos"
 APP="$OUT/Codex Auto Retry.app"
-mkdir -p "$OUT/$(basename "$APP")/Contents/MacOS"
+mkdir -p "$OUT/$(basename "$APP")/Contents/MacOS" "$OUT/$(basename "$APP")/Contents/Resources"
 swiftc -O -target arm64-apple-macosx27.0 -framework Cocoa \
   "$ROOT/src/CodexAutoRetryMenuBar.swift" \
   -o "$APP/Contents/MacOS/CodexAutoRetryMenuBar"
@@ -27,6 +27,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 chmod 700 "$APP/Contents/MacOS/CodexAutoRetryMenuBar"
 cp "$ROOT/src/codex_auto_retry.py" "$OUT/codex-auto-retry.py"
+cp "$ROOT/src/codex_auto_retry.py" "$APP/Contents/Resources/codex-auto-retry.py"
 cp "$ROOT/config.default.json" "$OUT/config.default.json"
 cp "$ROOT/scripts/install_macos.sh" "$OUT/install_macos.sh"
 chmod 755 "$OUT/install_macos.sh"

@@ -1,9 +1,7 @@
 import Cocoa
 import Darwin
 
-private let label = "com.openai.codex-auto-retry"
-private let retryPlist = NSString(string: "~/Library/LaunchAgents/com.openai.codex-auto-retry.plist").expandingTildeInPath
-private let retryScript = NSString(string: "~/.codex/auto-retry/codex-auto-retry.py").expandingTildeInPath
+private let installedScript = NSString(string: "~/.codex/auto-retry/codex-auto-retry.py").expandingTildeInPath
 private let statePath = NSString(string: "~/.codex/auto-retry/state.json").expandingTildeInPath
 private let configPath = NSString(string: "~/.codex/auto-retry/config.json").expandingTildeInPath
 private let logPath = NSString(string: "~/.codex/auto-retry/watcher.log").expandingTildeInPath
@@ -37,9 +35,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private var maxBackoffField: NSTextField?
     private var pollSecondsField: NSTextField?
     private var backoffModePopup: NSPopUpButton?
+    private var watcherProcess: Process?
+    private var watcherLogHandle: FileHandle?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        startBundledWatcher()
         configureStatusItem()
         configureMenu()
         refresh()
@@ -48,6 +49,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         timer?.invalidate()
+        try? watcherLogHandle?.close()
     }
 
     private func configureStatusItem() {
@@ -81,7 +83,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func refresh() {
-        serviceRunning = launchctlPrint().contains("state = running")
+        serviceRunning = configEnabled()
         let state = readState()
         let pending = state?.threads?.values.filter { item in
             guard let pending = item.pending else { return false }
@@ -95,7 +97,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             stateItem.title = "后台服务已暂停 · 待重试 \(pending)"
             toggleItem.title = "启用自动重试"
         }
-        toggleItem.isEnabled = FileManager.default.fileExists(atPath: retryPlist)
+        toggleItem.isEnabled = true
     }
 
     private func readState() -> RetryState? {
@@ -103,18 +105,67 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         return try? JSONDecoder().decode(RetryState.self, from: data)
     }
 
-    private func launchctlPrint() -> String {
-        runProcess("/bin/launchctl", arguments: ["print", "gui/\(getuid())/\(label)"]).stdout
+    private var watcherScriptPath: String {
+        return Bundle.main.path(forResource: "codex-auto-retry", ofType: "py") ?? installedScript
     }
 
     @objc private func toggleService() {
-        if serviceRunning {
-            _ = runProcess("/bin/launchctl", arguments: ["bootout", "gui/\(getuid())/\(label)"])
-        } else {
-            _ = runProcess("/bin/launchctl", arguments: ["bootstrap", "gui/\(getuid())", retryPlist])
-            _ = runProcess("/bin/launchctl", arguments: ["kickstart", "-k", "gui/\(getuid())/\(label)"])
-        }
+        var values = readConfig()
+        values["enabled"] = !serviceRunning
+        writeConfig(values)
         refresh()
+    }
+
+    private func startBundledWatcher() {
+        guard FileManager.default.fileExists(atPath: watcherScriptPath) else { return }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        process.arguments = [watcherScriptPath, "--foreground"]
+        FileManager.default.createFile(atPath: logPath, contents: nil)
+        if let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: logPath)) {
+            handle.seekToEndOfFile()
+            process.standardOutput = handle
+            process.standardError = handle
+            watcherLogHandle = handle
+        }
+        do {
+            try process.run()
+            watcherProcess = process
+        } catch {
+            watcherProcess = nil
+            appendDiagnostic("watcher start failed: \(error.localizedDescription)\n")
+        }
+    }
+
+    private func appendDiagnostic(_ message: String) {
+        FileManager.default.createFile(atPath: logPath, contents: nil)
+        guard let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: logPath)) else { return }
+        handle.seekToEndOfFile()
+        handle.write(message.data(using: .utf8) ?? Data())
+        try? handle.close()
+    }
+
+    private func readConfig() -> [String: Any] {
+        guard let data = FileManager.default.contents(atPath: configPath),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              let values = object as? [String: Any] else {
+            return [:]
+        }
+        return values
+    }
+
+    private func writeConfig(_ values: [String: Any]) {
+        guard JSONSerialization.isValidJSONObject(values), let data = try? JSONSerialization.data(withJSONObject: values, options: [.prettyPrinted, .sortedKeys]) else { return }
+        do {
+            try data.write(to: URL(fileURLWithPath: configPath), options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configPath)
+        } catch {
+            return
+        }
+    }
+
+    private func configEnabled() -> Bool {
+        return (readConfig()["enabled"] as? NSNumber)?.boolValue ?? true
     }
 
     @objc private func showSettings() {
@@ -132,7 +183,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let enabled = NSButton(checkboxWithTitle: "启用自动重试", target: nil, action: nil)
         enabled.frame = NSRect(x: 28, y: 332, width: 200, height: 24)
-        enabled.state = serviceRunning ? .on : .off
+        enabled.state = configEnabled() ? .on : .off
         content.addSubview(enabled)
         enabledCheckbox = enabled
 
@@ -252,17 +303,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             showAlert(title: "保存失败", message: error.localizedDescription)
             return
         }
-        let shouldRun = enabledCheckbox.state == .on
-        if shouldRun != serviceRunning {
-            toggleService()
-        } else {
-            refresh()
-        }
+        refresh()
         settingsWindow?.close()
     }
 
     @objc private func checkIPC() {
-        let result = runProcess("/usr/bin/python3", arguments: [retryScript, "--check"])
+        let result = runProcess("/usr/bin/python3", arguments: [watcherScriptPath, "--check"])
         let text = result.stdout.isEmpty ? result.stderr : result.stdout
         showAlert(title: result.status == 0 ? "Codex IPC 正常" : "Codex IPC 检查失败", message: text.trimmingCharacters(in: .whitespacesAndNewlines))
     }

@@ -17,13 +17,13 @@
 ./scripts/build_macos.sh
 ```
 
-输出在 `dist/macos/`。安装：
+输出在 `dist/macos/`。现在 watcher 已嵌入 `.app` 的 `Contents/Resources`，可以直接把 `.app` 拖到“应用程序”后双击运行。需要登录自动启动时再运行安装脚本：
 
 ```sh
 ./scripts/install_macos.sh
 ```
 
-当前 Mac 版本使用 Codex Desktop 的本地 Unix IPC（`~/.codex/ipc/ipc.sock`）和菜单栏 AppKit UI。
+当前 Mac 版本使用 Codex Desktop 的本地 Unix IPC（`~/.codex/ipc/ipc.sock`）和菜单栏 AppKit UI。`.app` 启动时会自动启动内置 Python watcher，并使用锁文件防止重复启动。
 
 ## Windows
 

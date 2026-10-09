@@ -30,6 +30,7 @@ SESSIONS_DIR = CODEX_HOME / "sessions"
 SOCKET_PATH = r"\\.\pipe\codex-ipc" if os.name == "nt" else CODEX_HOME / "ipc" / "ipc.sock"
 STATE_PATH = AUTO_RETRY_DIR / "state.json"
 CONFIG_PATH = AUTO_RETRY_DIR / "config.json"
+LOCK_PATH = AUTO_RETRY_DIR / "watcher.lock"
 LOG_PATH = AUTO_RETRY_DIR / "watcher.log"
 PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / "com.openai.codex-auto-retry.plist"
 
@@ -139,6 +140,28 @@ def atomic_write_json(path: Path, value: Any) -> None:
             os.unlink(tmp_name)
         except FileNotFoundError:
             pass
+
+
+def acquire_watcher_lock() -> Any:
+    ensure_dirs()
+    handle = LOCK_PATH.open("a+")
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            handle.seek(0)
+            handle.write("0")
+            handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (OSError, IOError):
+        handle.close()
+        return None
+    return handle
 
 
 def load_state() -> Dict[str, Any]:
@@ -581,22 +604,29 @@ def dispatch_due(state: Dict[str, Any], dry_run: bool = False) -> bool:
 
 def watcher_loop(dry_run: bool = False) -> None:
     global SETTINGS
+    lock_handle = acquire_watcher_lock()
+    if lock_handle is None:
+        logging.info("another watcher instance is already running")
+        return
     state = load_state()
     for path in list_rollouts():
         if path.is_file():
             initialize_file_state(state, path, at_end=True)
     atomic_write_json(STATE_PATH, state)
     logging.info("watching %s", SESSIONS_DIR)
-    while True:
-        SETTINGS = load_settings()
-        changed = False
-        for path in list_rollouts():
-            if path.is_file():
-                changed = consume_file(state, path) or changed
-        changed = dispatch_due(state, dry_run) or changed
-        if changed:
-            atomic_write_json(STATE_PATH, state)
-        time.sleep(float(SETTINGS["poll_seconds"]))
+    try:
+        while True:
+            SETTINGS = load_settings()
+            changed = False
+            for path in list_rollouts():
+                if path.is_file():
+                    changed = consume_file(state, path) or changed
+            changed = dispatch_due(state, dry_run) or changed
+            if changed:
+                atomic_write_json(STATE_PATH, state)
+            time.sleep(float(SETTINGS["poll_seconds"]))
+    finally:
+        lock_handle.close()
 
 
 def check_ipc(thread_id: Optional[str]) -> int:
