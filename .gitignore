@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv*/
+.DS_Store
+*.log
+state.json
+config.json
+# Generated unpacked application and copied build inputs
+dist/macos/Codex Auto Retry.app/
+dist/macos/codex-auto-retry.py
+dist/macos/config.default.json
+dist/macos/install_macos.sh
+# Windows build outputs
+dist/windows/
+dist/CodexAutoRetry.exe

@@ -1,0 +1,9 @@
+{
+  "enabled": true,
+  "backoff_mode": "linear",
+  "initial_backoff": 5,
+  "max_attempts": 15,
+  "max_backoff": 120,
+  "max_chain_seconds": 1800,
+  "poll_seconds": 1
+}
