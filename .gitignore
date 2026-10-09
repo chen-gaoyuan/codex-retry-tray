@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 .venv*/
+.build/
 .DS_Store
 *.log
 state.json

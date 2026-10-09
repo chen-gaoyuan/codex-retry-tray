@@ -109,6 +109,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         return Bundle.main.path(forResource: "codex-auto-retry", ofType: "py") ?? installedScript
     }
 
+    private var watcherExecutablePath: String? {
+        return Bundle.main.path(forResource: "CodexAutoRetryWatcher", ofType: nil)
+    }
+
     @objc private func toggleService() {
         var values = readConfig()
         values["enabled"] = !serviceRunning
@@ -119,8 +123,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private func startBundledWatcher() {
         guard FileManager.default.fileExists(atPath: watcherScriptPath) else { return }
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-        process.arguments = [watcherScriptPath, "--foreground"]
+        if let executable = watcherExecutablePath {
+            process.executableURL = URL(fileURLWithPath: executable)
+            process.arguments = ["--foreground"]
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+            process.arguments = [watcherScriptPath, "--foreground"]
+        }
         FileManager.default.createFile(atPath: logPath, contents: nil)
         if let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: logPath)) {
             handle.seekToEndOfFile()

@@ -3,7 +3,19 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/dist/macos"
 APP="$OUT/Codex Auto Retry.app"
-mkdir -p "$OUT/$(basename "$APP")/Contents/MacOS" "$OUT/$(basename "$APP")/Contents/Resources"
+BUILD="$ROOT/.build/macos"
+VENV="$BUILD/venv"
+mkdir -p "$OUT/$(basename "$APP")/Contents/MacOS" "$OUT/$(basename "$APP")/Contents/Resources" "$BUILD/pyinstaller-dist" "$BUILD/pyinstaller-work" "$BUILD/pyinstaller-spec"
+if [[ ! -x "$VENV/bin/python" ]]; then
+  python3 -m venv "$VENV"
+fi
+"$VENV/bin/python" -m pip install --quiet --upgrade pip pyinstaller
+"$VENV/bin/python" -m PyInstaller --noconfirm --clean --onefile \
+  --name CodexAutoRetryWatcher \
+  --distpath "$BUILD/pyinstaller-dist" \
+  --workpath "$BUILD/pyinstaller-work" \
+  --specpath "$BUILD/pyinstaller-spec" \
+  "$ROOT/src/codex_auto_retry.py" >/dev/null
 swiftc -O -target arm64-apple-macosx27.0 -framework Cocoa \
   "$ROOT/src/CodexAutoRetryMenuBar.swift" \
   -o "$APP/Contents/MacOS/CodexAutoRetryMenuBar"
@@ -28,6 +40,8 @@ PLIST
 chmod 700 "$APP/Contents/MacOS/CodexAutoRetryMenuBar"
 cp "$ROOT/src/codex_auto_retry.py" "$OUT/codex-auto-retry.py"
 cp "$ROOT/src/codex_auto_retry.py" "$APP/Contents/Resources/codex-auto-retry.py"
+cp "$BUILD/pyinstaller-dist/CodexAutoRetryWatcher" "$APP/Contents/Resources/CodexAutoRetryWatcher"
+chmod 700 "$APP/Contents/Resources/CodexAutoRetryWatcher"
 cp "$ROOT/config.default.json" "$OUT/config.default.json"
 cp "$ROOT/scripts/install_macos.sh" "$OUT/install_macos.sh"
 chmod 755 "$OUT/install_macos.sh"
