@@ -258,6 +258,44 @@ def initialize_file_state(state: Dict[str, Any], path: Path, at_end: bool = Fals
     }
 
 
+def refresh_file_session_id(file_state: Dict[str, Any], path: Path) -> bool:
+    """Keep persisted file ownership correct after a watcher restart.
+
+    Rollout filenames identify the turn, while the first session_meta event
+    identifies the conversation that owns it. The latter is the source of
+    truth, and reading the first line is cheap even for large rollout files.
+    """
+    session_id = read_session_id(path)
+    if not session_id or file_state.get("session_id") == session_id:
+        return False
+    previous = file_state.get("session_id")
+    file_state["session_id"] = session_id
+    logging.info("rollout ownership updated path=%s old_thread=%s new_thread=%s", path, previous, session_id)
+    return True
+
+
+def prune_orphaned_threads(state: Dict[str, Any], paths: Iterable[Path]) -> bool:
+    """Drop pending work for conversations whose rollout files were archived."""
+    live_threads = set()
+    for path in paths:
+        file_state = state["files"].get(str(path))
+        if isinstance(file_state, dict):
+            session_id = file_state.get("session_id")
+            if session_id:
+                live_threads.add(str(session_id))
+
+    changed = False
+    for thread_id, thread in state.get("threads", {}).items():
+        if thread_id in live_threads or not isinstance(thread, dict):
+            continue
+        if thread.get("pending") is not None or thread.get("active"):
+            logging.info("clearing archived/orphaned thread=%s", thread_id)
+            thread["pending"] = None
+            thread["active"] = False
+            changed = True
+    return changed
+
+
 class IpcError(RuntimeError):
     pass
 
@@ -524,6 +562,7 @@ def consume_file(state: Dict[str, Any], path: Path) -> bool:
         initialize_file_state(state, path, at_end=False)
         return False
     file_state = state["files"][key]
+    changed = refresh_file_session_id(file_state, path)
     try:
         size = path.stat().st_size
     except OSError:
@@ -545,7 +584,6 @@ def consume_file(state: Dict[str, Any], path: Path) -> bool:
     lines = data.split(b"\n")
     pending = lines.pop()
     consumed_new = len(data) - len(prefix) - len(pending)
-    changed = False
     for raw_line in lines:
         if not raw_line.strip():
             continue
@@ -627,9 +665,11 @@ def watcher_loop(dry_run: bool = False) -> None:
         while True:
             SETTINGS = load_settings()
             changed = False
-            for path in list_rollouts():
+            paths = [path for path in list_rollouts() if path.is_file()]
+            for path in paths:
                 if path.is_file():
                     changed = consume_file(state, path) or changed
+            changed = prune_orphaned_threads(state, paths) or changed
             changed = dispatch_due(state, dry_run) or changed
             if changed:
                 atomic_write_json(STATE_PATH, state)
