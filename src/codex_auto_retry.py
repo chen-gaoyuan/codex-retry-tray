@@ -457,6 +457,11 @@ def append_failure(thread: Dict[str, Any], failure_key: str, category: str, now:
     if not isinstance(pending, dict) or pending.get("failure_key") != failure_key:
         attempts = int(pending.get("attempts", 0)) if isinstance(pending, dict) else 0
         first_at = float(pending.get("first_at", now)) if isinstance(pending, dict) else now
+        if isinstance(pending, dict) and (
+            pending.get("exhausted") or now - first_at > float(SETTINGS["max_chain_seconds"])
+        ):
+            attempts = 0
+            first_at = now
         thread["pending"] = {
             "failure_key": failure_key,
             "category": category,
@@ -487,6 +492,10 @@ def process_event(state: Dict[str, Any], path: Path, event: Dict[str, Any]) -> N
     event_type = payload.get("type")
     now = time.time()
     if event_type == "task_started":
+        # A user-initiated retry after a chain was exhausted starts a new
+        # chain instead of inheriting the expired first_at timestamp.
+        if isinstance(thread.get("pending"), dict) and thread["pending"].get("exhausted"):
+            thread["pending"] = None
         thread["active"] = True
         return
     if event_type == "turn_aborted":

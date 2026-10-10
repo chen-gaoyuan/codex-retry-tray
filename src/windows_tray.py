@@ -159,6 +159,7 @@ def show_settings() -> None:
 
 def main() -> None:
     retry.ensure_dirs()
+    retry.setup_logging()
     threading.Thread(target=retry.watcher_loop, daemon=True).start()
     WindowsTray().icon.run()
 
